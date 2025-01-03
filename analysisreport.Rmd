@@ -1,0 +1,218 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Godwin Osuji"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introduction
+This project aims to predict the manner in which individuals perform barbell lifts using data collected from wearable devices. The dataset includes measurements from accelerometers placed on various body parts (e.g., belt, forearm, and dumbbell). The `classe` variable is the target, representing different lift techniques. The analysis uses a Random Forest model to classify the lift type.
+
+---
+
+## 2. Data Cleaning and Preprocessing
+
+```{r echo=FALSE, include=FALSE, cache=TRUE}
+# Load necessary libraries
+library(caret)
+library(randomForest)
+
+
+# Load datasets
+training_data <- read.csv("pml-training.csv", stringsAsFactors = FALSE)
+testing_data <- read.csv("pml-testing.csv", stringsAsFactors = FALSE)
+
+
+# Remove columns with >50% missing values
+missing_values_ratio <- colMeans(is.na(training_data))
+columns_to_drop <- names(missing_values_ratio[missing_values_ratio > 0.5])
+training_data_cleaned <- training_data[, !(names(training_data) %in% columns_to_drop)]
+testing_data_cleaned <- testing_data[, !(names(testing_data) %in% columns_to_drop)]
+
+
+# Remove near-zero variance columns
+nzv <- nearZeroVar(training_data_cleaned, saveMetrics = TRUE)
+training_data_cleaned <- training_data_cleaned[, !nzv$nzv]
+testing_data_cleaned <- testing_data_cleaned[, !nzv$nzv]
+
+
+# Drop irrelevant columns
+irrelevant_columns <- c("X", "user_name", "cvtd_timestamp", "raw_timestamp_part_1", 
+                        "raw_timestamp_part_2", "new_window")
+training_data_cleaned <- training_data_cleaned[, !(names(training_data_cleaned) %in% irrelevant_columns)]
+testing_data_cleaned <- testing_data_cleaned[, !(names(testing_data_cleaned) %in% irrelevant_columns)]
+```
+
+#### Steps Taken
+1. Missing Data: Columns with over 50% missing values were removed.
+2. Near-Zero Variance: Features with negligible variability were excluded to prevent overfitting.
+3. Irrelevant Features: Columns unrelated to prediction, such as timestamps and IDs, were removed.
+
+## 3. Exploratory Data Analysis
+
+```{r echo=FALSE}
+# Distribution of Target Variable
+classe_distribution <- table(training_data_cleaned$classe)
+barplot(classe_distribution, main="Distribution of Classe", col="skyblue", xlab="Classe", ylab="Frequency")
+```
+
+The `classe` variable was evenly distributed across its five classes (`A`, `B`, `C`, `D`, and `E`), making the dataset suitable for classification without additional balancing techniques.
+
+---
+
+## 4. Model Development
+
+### Training and Testing
+
+```{r echo=FALSE}
+# Split data into features and target variable
+X <- training_data_cleaned[, -ncol(training_data_cleaned)]
+y <- training_data_cleaned$classe
+
+
+# Train-test split
+set.seed(42)
+trainIndex <- createDataPartition(y, p = 0.8, list = FALSE)
+X_train <- X[trainIndex, ]
+y_train <- y[trainIndex]
+X_test <- X[-trainIndex, ]
+y_test <- y[-trainIndex]
+```
+
+The dataset was split into training (80%) and testing (20%) subsets.
+
+### Model
+
+```{r echo=FALSE, results='hide', cache=TRUE}
+# Train Random Forest model
+rf_model <- randomForest(X_train, as.factor(y_train), ntree = 500, importance = TRUE, 
+                         mtry = sqrt(ncol(X_train)), do.trace = 10)
+```
+
+A Random Forest model was trained with 500 trees, optimizing feature splits using the square root of the total features (`mtry`).
+
+### Evaluation
+
+```{r echo=FALSE}
+# Predictions on the test set
+y_pred <- predict(rf_model, X_test)
+```
+
+```{r echo=FALSE}
+# Model evaluation
+confusion_matrix <- confusionMatrix(as.factor(y_pred), as.factor(y_test))
+print(confusion_matrix)
+```
+
+- Accuracy: The model achieved a near-perfect accuracy of **99.92%**.
+- Confusion Matrix:
+  - Predictions were highly accurate, with only three misclassifications out of thousands of predictions.
+  - Most errors involved misclassifying `D` as `C`.
+
+---
+
+## 5. Results
+
+### Predictions
+
+```{r echo=FALSE}
+# Predictions on the testing dataset
+test_features <- testing_data_cleaned[, !(names(testing_data_cleaned) %in% c("problem_id"))]
+test_predictions <- predict(rf_model, test_features)
+
+
+# Combine predictions with problem IDs
+results <- data.frame(problem_id = testing_data_cleaned$problem_id, 
+                      predicted_classe = test_predictions)
+
+
+# Print first few rows of the predictions
+print(head(results))
+```
+
+The model generated predictions for the testing dataset (`pml-testing.csv`). The first six predictions were:
+
+- `B`, `A`, `B`, `A`, `A`, `E`.
+
+Since the true labels for the test cases are unavailable, the accuracy of these predictions could not be directly evaluated.
+
+---
+
+### Feature Importance
+
+
+```{r echo=FALSE, fig.width=10, fig.height=8}
+# Variable Importance Plot
+varImpPlot(rf_model, main="Feature Importance")
+```
+
+The most critical features identified were:
+
+- `roll_belt`
+- `yaw_belt`
+- `pitch_belt`
+
+These features had the highest impact on model accuracy, likely due to their ability to capture nuanced motion patterns during the exercises.
+
+### Error Analysis
+
+```{r echo=FALSE}
+# Misclassified Instances
+misclassified <- which(y_pred != y_test)
+misclassified_instances <- X_test[misclassified, ]
+misclassified_true <- y_test[misclassified]
+misclassified_pred <- y_pred[misclassified]
+
+error_analysis <- data.frame(True_Class = misclassified_true, Predicted_Class = misclassified_pred)
+print(head(error_analysis))
+```
+
+The few misclassified instances indicated potential overlap in movement characteristics between certain classes, such as `D` and `C`.
+
+## 6. Key Feature Investigation
+
+```{r echo=FALSE}
+# Calculate correlation with the target variable
+correlation_roll_belt <- cor(as.numeric(as.factor(training_data_cleaned$classe)), training_data_cleaned$roll_belt)
+correlation_yaw_belt <- cor(as.numeric(as.factor(training_data_cleaned$classe)), training_data_cleaned$yaw_belt)
+
+print(paste("Correlation of roll_belt with classe:", correlation_roll_belt))
+print(paste("Correlation of yaw_belt with classe:", correlation_yaw_belt))
+```
+
+
+### Correlation Analysis:
+- `roll_belt`: Weak positive correlation with `classe` (**0.062**).
+- `yaw_belt`: Extremely weak correlation (**0.014**).
+
+### Visual Analysis:
+
+```{r echo=FALSE, fig.width=9}
+# Visualize the relationship between roll_belt and classe
+ggplot(training_data_cleaned, aes(x = classe, y = roll_belt, fill = classe)) +
+  geom_boxplot() +
+  labs(title = "Relationship between roll_belt and classe", x = "Classe", y = "Roll Belt") +
+  theme_minimal()
+```
+
+
+```{r echo=FALSE, fig.width=9}
+# Visualize the relationship between yaw_belt and classe
+ggplot(training_data_cleaned, aes(x = classe, y = yaw_belt, fill = classe)) +
+  geom_boxplot() +
+  labs(title = "Relationship between yaw_belt and classe", x = "Classe", y = "Yaw Belt") +
+  theme_minimal()
+```
+
+The boxplots revealed `roll_belt` and `yaw_belt` distributions were notably different for Class `E`, explaining their importance in distinguishing this class.
+
+---
+
+## 7. Conclusion
+
+The project successfully demonstrated the application of machine learning in activity classification using sensor data. The Random Forest model achieved high accuracy, with `roll_belt` and `yaw_belt` emerging as key contributors. These findings underscore the importance of wearable sensors in fitness monitoring and activity classification.
+
+---
